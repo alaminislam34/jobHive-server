@@ -4,6 +4,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const { MongoClient, ObjectId } = require("mongodb");
+const { title } = require("process");
 
 // ====== App Setup ======
 const app = express();
@@ -56,24 +57,24 @@ io.on("connection", (socket) => {
   });
 
   socket.on("newJobPosted", (data) => {
-    console.log(`📢 Broadcasting new job: ${data.jobTitle}`);
+    console.log(`📢 Broadcasting new job: ${data.title}`);
     io.emit("newJobPosted", data);
   });
 
   //apply job notification alert
-  socket.on("jobApplication", ({ employerEmail, jobTitle, applicantName }) => {
+  socket.on("jobApplication", ({ employer, title, applicantName }) => {
     console.log(
-      `📨 Job application from ${applicantName} to ${employerEmail} for ${jobTitle}`
+      `📨 Job application from ${applicantName} to ${employer} for ${title}`
     );
-    const employerSocketId = connectedUsers.get(employerEmail);
+    const employerSocketId = connectedUsers.get(employer);
     if (employerSocketId) {
       io.to(employerSocketId).emit("jobApplicationNotification", {
-        jobTitle,
+        title,
         applicantName,
       });
-      console.log(`✅ Notified employer (${employerEmail})`);
+      console.log(`✅ Notified employer (${employer})`);
     } else {
-      console.log(`❌ Employer not connected: ${employerEmail}`);
+      console.log(`❌ Employer not connected: ${employer}`);
     }
   });
 
@@ -120,97 +121,39 @@ function generateRoomId(user1, user2) {
 
 // ====== API Routes ======
 
-app.post("/api/jobs", async (req, res) => {
-  const job = req.body;
-  try {
-    const result = await jobsCollection.insertOne(job);
-    io.emit("newJobPosted", {
-      jobTitle: job.jobTitle,
-      companyName: job.companyName,
-    });
-    console.log(`✅ Job posted: ${job.jobTitle}`);
-    res.send({ success: true, insertedId: result.insertedId });
-  } catch (error) {
-    console.error("❌ Failed to post job:", error);
-    res.status(500).send({ error: "Failed to post job." });
-  }
+//for notify all the jobseeker
+app.post("/api/emit-job-post", (req, res) => {
+  const { title, industry } = req.body;
+  io.emit("newJobPosted", { title, industry });
+  console.log(`🔔 Emitted new job: ${title}`);
+  res.send({ success: true });
 });
 
-app.post("/api/apply", async (req, res) => {
-  const { jobId, applicantName, employerEmail } = req.body;
+app.post("/api/emit-apply", async (req, res) => {
+  const { jobId, applicantName, employer } = req.body;
+  console.log("📩 Emit Apply - Incoming Payload:", req.body);
+  console.log("jobId", jobId);
+  console.log("applicantName", applicantName);
+  console.log("employer", employer);
   try {
     const job = await jobsCollection.findOne({ _id: new ObjectId(jobId) });
-    if (!job) {
-      console.warn(`⚠️ Job not found: ${jobId}`);
-      return res.status(404).send({ error: "Job not found" });
-    }
 
-    const employerSocketId = connectedUsers.get(employerEmail);
+    const employerSocketId = connectedUsers.get(employer);
+    console.log("🧩 Employer socket ID:", employerSocketId);
     if (employerSocketId) {
       io.to(employerSocketId).emit("jobApplicationNotification", {
-        jobTitle: job.jobTitle,
+        title: job.title,
         applicantName,
       });
-      console.log(`📨 Application sent to ${employerEmail}`);
+      console.log(`📨 Application sent to ${employer}`);
     } else {
-      console.log(`❌ Employer not connected: ${employerEmail}`);
+      console.log(`❌ Employer not connected: ${employer}`);
     }
 
     res.send({ success: true, message: "Application notification sent" });
   } catch (error) {
     console.error("❌ Error during job apply:", error);
     res.status(500).send({ error: "Failed to apply." });
-  }
-});
-
-app.post("/api/notify-employer", (req, res) => {
-  const { employerEmail, jobTitle, applicantName } = req.body;
-  const employerSocketId = connectedUsers.get(employerEmail);
-
-  if (employerSocketId) {
-    io.to(employerSocketId).emit("jobApplicationNotification", {
-      jobTitle,
-      applicantName,
-    });
-    console.log(`📨 Manually notified employer: ${employerEmail}`);
-    res.send({ success: true, message: "Employer notified manually" });
-  } else {
-    console.log(`❌ Employer not connected: ${employerEmail}`);
-    res.status(404).send({ error: "Employer not connected" });
-  }
-});
-
-// notification send api
-app.post("/api/send-notification-by-id", async (req, res) => {
-  const { userId, title, message } = req.body;
-
-  try {
-    const db = client.db("jobHive");
-    const usersCollection = db.collection("users");
-
-    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
-
-    if (!user) {
-      return res.status(404).send({ error: "User not found" });
-    }
-
-    const email = user.email;
-    const recipientSocketId = connectedUsers.get(email);
-
-    if (recipientSocketId) {
-      io.to(recipientSocketId).emit("customNotification", {
-        title,
-        message,
-      });
-      console.log(`📨 Notification sent to user ${email}`);
-      res.send({ success: true, message: "Notification sent" });
-    } else {
-      console.log(`❌ User not connected: ${email}`);
-      res.status(404).send({ error: "User not connected" });
-    }
-  } catch (error) {
-    console.error("❌ Error sending notification by ID:", error);
-    res.status(500).send({ error: "Internal server error" });
   }
 });
 
