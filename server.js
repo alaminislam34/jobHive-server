@@ -180,6 +180,40 @@ app.post("/api/notify-employer", (req, res) => {
   }
 });
 
+// notification send api
+app.post("/api/send-notification-by-id", async (req, res) => {
+  const { userId, title, message } = req.body;
+
+  try {
+    const db = client.db("jobHive");
+    const usersCollection = db.collection("users");
+
+    const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+
+    if (!user) {
+      return res.status(404).send({ error: "User not found" });
+    }
+
+    const email = user.email;
+    const recipientSocketId = connectedUsers.get(email);
+
+    if (recipientSocketId) {
+      io.to(recipientSocketId).emit("customNotification", {
+        title,
+        message,
+      });
+      console.log(`📨 Notification sent to user ${email}`);
+      res.send({ success: true, message: "Notification sent" });
+    } else {
+      console.log(`❌ User not connected: ${email}`);
+      res.status(404).send({ error: "User not connected" });
+    }
+  } catch (error) {
+    console.error("❌ Error sending notification by ID:", error);
+    res.status(500).send({ error: "Internal server error" });
+  }
+});
+
 // ====== Server Start ======
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
